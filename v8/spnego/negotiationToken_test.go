@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/jcmturner/gofork/encoding/asn1"
-	"github.com/jcmturner/gokrb5/v8/gssapi"
+
 	"github.com/stretchr/testify/assert"
 )
 
@@ -91,24 +91,63 @@ func TestMarshal_negTokenResp(t *testing.T) {
 }
 
 func TestUnmarshal_negTokenInitWithReqFlags(t *testing.T) {
-	m := NegTokenInit{
+
+	type myNegTokenInit struct {
+		MechTypes      []asn1.ObjectIdentifier `asn1:"explicit,tag:0"`
+		ReqFlags       asn1.BitString          `asn1:"explicit,optional,tag:1"`
+		MechTokenBytes []byte                  `asn1:"explicit,optional,omitempty,tag:2"`
+		MechListMIC    []byte                  `asn1:"explicit,optional,omitempty,tag:3"`
+	}
+
+	m := myNegTokenInit{
 		MechTypes: []asn1.ObjectIdentifier{
 			asn1.ObjectIdentifier{1, 2, 840, 113554, 1, 2, 2},
 		},
-		// the presence of ReqFlags field messes up the asn1 parser. comment
-		ReqFlags:       gssapi.ContextFlags{BitLength: 7, Bytes: []byte{0xF6}},
+		// the presence of ReqFlags breaks the upcoming Unmarshal. comment out
+		// to see the difference.
+		ReqFlags:       asn1.BitString{BitLength: 7, Bytes: []byte{0xF6}},
 		MechTokenBytes: []byte{'\x01', '\x02', '\x03'},
 	}
 
-	mb, err := m.Marshal()
+	mb, err := asn1.Marshal(m)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var m2 NegTokenInit
-	err = m2.Unmarshal(mb)
+	nt := asn1.RawValue{
+		Tag:        0,
+		Class:      2,
+		IsCompound: true,
+		Bytes:      mb,
+	}
+
+	ntb, err := asn1.Marshal(nt)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("%+v/n", m2)
+
+	//
+	// at this point ntb looks like this
+	//
+	// $ openssl asn1parse -in /tmp/ntb -inform DER -i
+	//    0:d=0  hl=2 l=  30 cons: cont [ 0 ]
+	//    2:d=1  hl=2 l=  28 cons:  SEQUENCE
+	//    4:d=2  hl=2 l=  13 cons:   cont [ 0 ]
+	//    6:d=3  hl=2 l=  11 cons:    SEQUENCE
+	//    8:d=4  hl=2 l=   9 prim:     OBJECT            :1.2.840.113554.1.2.2
+	//   19:d=2  hl=2 l=   4 cons:   cont [ 1 ]
+	//   21:d=3  hl=2 l=   2 prim:    BIT STRING
+	//   25:d=2  hl=2 l=   5 cons:   cont [ 2 ]
+	//   27:d=3  hl=2 l=   3 prim:    OCTET STRING      [HEX DUMP]:010203
+	//
+	//
+	// the 'BIT STRING' field is ReqFlags.
+
+	var nt2 NegTokenInit
+	err = nt2.Unmarshal(ntb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// when ReqFlags is present, nt2.MechTokenBytes is 0 length
+	t.Logf("%+v", nt2)
 }
